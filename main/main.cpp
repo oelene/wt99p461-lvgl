@@ -11,7 +11,7 @@
  *   1. 初始化 NVS
  *   2. 初始化显示 + 触摸（BSP 内部会启动 LVGL 任务，屏幕驱动见 components/esp_lcd_jd9165）
  *   3. 点亮背光、初始化板载 RGB LED
- *   4. 创建 LVGL 界面（计数器 + 开关 + LED 联动）
+ *   4. 创建 LVGL 界面（计数器按钮 + RGB 滑动条 + LED 开关联动）
  *   5. 另起一个 FreeRTOS 任务，定期打印内存 + 点灯呼吸
  *
  * 想学 LVGL：看下面 ui_create_ui()。
@@ -51,6 +51,8 @@ static int g_count = 0;
 static int R_count = 0;
 /* LED 开关（与板载 WS2812 联动） */
 static lv_obj_t *g_led_switch = NULL;
+/* RGB 滑动条：[0]=R [1]=G [2]=B（同样联动 WS2812） */
+static lv_obj_t *g_rgb_sliders[3] = {NULL, NULL, NULL};
 
 static void count_btn_event_cb(lv_event_t *e)
 {
@@ -76,22 +78,39 @@ static void count_btn_R_event_cb(lv_event_t *e)
 
 
 
+/* 把开关状态 + 三个滑动条的 RGB 值写到板载 WS2812（需持显示锁调用） */
+static void led_apply(void)
+{
+    bool on = g_led_switch && lv_obj_has_state(g_led_switch, LV_STATE_CHECKED);
+    if (!on) {
+        bsp_rgb_led_clear();
+        return;
+    }
+    uint8_t r = lv_slider_get_value(g_rgb_sliders[0]);
+    uint8_t g = lv_slider_get_value(g_rgb_sliders[1]);
+    uint8_t b = lv_slider_get_value(g_rgb_sliders[2]);
+    bsp_rgb_led_set_rgb(r, g, b);
+}
+
+/* 滑动条回调：更新数值标签，并实时刷新 LED 颜色（user_data = 对应数值标签） */
+static void slider_event_cb(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    lv_obj_t *val_label = (lv_obj_t *)lv_event_get_user_data(e);
+    lv_label_set_text_fmt(val_label, "%d", (int)lv_slider_get_value(slider));
+    led_apply();
+}
+
 static void led_switch_event_cb(lv_event_t *e)
 {
-    lv_obj_t *sw = lv_event_get_target(e);
-    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    if (on) {
-        bsp_rgb_led_set_rgb(R_count, 64, 64); // 青色
-        ESP_LOGI(TAG, "LED switch ON");
-    } else {
-        bsp_rgb_led_clear();
-        ESP_LOGI(TAG, "LED switch OFF");
-    }
+    (void)e;
+    led_apply();
+    ESP_LOGI(TAG, "LED switch toggled");
 }
 
 
 
-/* 创建学习界面：标题 + 计数器 + 按钮 + LED 开关 */
+/* 创建学习界面：标题 + 计数器按钮 + RGB 滑动条 + LED 开关 */
 static void ui_create_ui(void)
 {
     bsp_display_lock(0);
@@ -141,16 +160,48 @@ static void ui_create_ui(void)
     lv_obj_set_style_text_font(btn2_label, &lv_font_montserrat_28, 0);
     lv_obj_center(btn2_label);
 
+    /* RGB 滑动条：R/G/B 三行，拖动即改板载 WS2812 颜色（开关打开时生效） */
+    const char *rgb_names[3] = {"R", "G", "B"};
+    const uint32_t rgb_colors[3] = {0xE53935, 0x43A047, 0x1E88E5};
+    const uint8_t rgb_inits[3] = {16, 0, 24};
+    for (int i = 0; i < 3; i++) {
+        const lv_coord_t y = 115 + i * 42; /* 与屏幕中心的垂直偏移 */
+
+        /* 通道名（左侧） */
+        lv_obj_t *name = lv_label_create(scr);
+        lv_label_set_text(name, rgb_names[i]);
+        lv_obj_set_style_text_color(name, lv_color_hex(rgb_colors[i]), 0);
+        lv_obj_set_style_text_font(name, &lv_font_montserrat_20, 0);
+        lv_obj_align(name, LV_ALIGN_CENTER, -230, y);
+
+        /* 当前数值（右侧，作为 user_data 传给回调） */
+        lv_obj_t *val = lv_label_create(scr);
+        lv_label_set_text_fmt(val, "%d", rgb_inits[i]);
+        lv_obj_set_style_text_color(val, lv_color_hex(rgb_colors[i]), 0);
+        lv_obj_set_style_text_font(val, &lv_font_montserrat_20, 0);
+        lv_obj_align(val, LV_ALIGN_CENTER, 250, y);
+
+        /* 滑动条本体：指示条和旋钮染成对应通道色 */
+        g_rgb_sliders[i] = lv_slider_create(scr);
+        lv_obj_set_width(g_rgb_sliders[i], 320);
+        lv_slider_set_range(g_rgb_sliders[i], 0, 255);
+        lv_slider_set_value(g_rgb_sliders[i], rgb_inits[i], LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(g_rgb_sliders[i], lv_color_hex(rgb_colors[i]), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(g_rgb_sliders[i], lv_color_hex(rgb_colors[i]), LV_PART_KNOB);
+        lv_obj_align(g_rgb_sliders[i], LV_ALIGN_CENTER, 30, y);
+        lv_obj_add_event_cb(g_rgb_sliders[i], slider_event_cb, LV_EVENT_VALUE_CHANGED, val);
+    }
+
     /* LED 开关 */
     lv_obj_t *led_label = lv_label_create(scr);
     lv_label_set_text(led_label, "LED");
     lv_obj_set_style_text_color(led_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(led_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(led_label, LV_ALIGN_CENTER, -120, 180);
+    lv_obj_align(led_label, LV_ALIGN_CENTER, -120, 245);
 
     g_led_switch = lv_switch_create(scr);
     lv_obj_set_size(g_led_switch, 100, 50);
-    lv_obj_align(g_led_switch, LV_ALIGN_CENTER, 60, 180);
+    lv_obj_align(g_led_switch, LV_ALIGN_CENTER, 60, 245);
     lv_obj_add_event_cb(g_led_switch, led_switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     bsp_display_unlock();
