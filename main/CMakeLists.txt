@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS main.cpp
     INCLUDE_DIRS .
-    REQUIRES wt99p461_s1_board lvgl__lvgl nvs_flash esp_driver_gpio
+    REQUIRES wt99p461_s1_board lvgl__lvgl nvs_flash esp_driver_gpio esp_driver_ledc
 )
 
 idf_component_get_property(LVGL_LIB lvgl__lvgl COMPONENT_LIB)
