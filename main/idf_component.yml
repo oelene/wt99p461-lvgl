@@ -1,0 +1,13 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf: "==6.0.1"
+  lvgl/lvgl: "==8.4.0"
+  espressif/led_strip: "3.0.3"
+  espressif/esp_wifi_remote:
+    version: "1.6.4"
+    rules:
+      - if: "target in [esp32p4, esp32h2]"
+  espressif/esp_hosted:
+    version: "2.12.13"
+    rules:
+      - if: "target in [esp32p4, esp32h2]"

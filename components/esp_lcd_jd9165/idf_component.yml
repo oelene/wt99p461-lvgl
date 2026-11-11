@@ -1,0 +1,4 @@
+version: "1.0.0"
+description: "JD9165BA 1024x600 supplier driver (WT9932P4C61-TINY), ESP-IDF 6.0.1"
+dependencies:
+  idf: "==6.0.1"
